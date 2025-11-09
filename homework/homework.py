@@ -61,3 +61,139 @@
 # {'type': 'metrics', 'dataset': 'train', 'r2': 0.8, 'mse': 0.7, 'mad': 0.9}
 # {'type': 'metrics', 'dataset': 'test', 'r2': 0.7, 'mse': 0.6, 'mad': 0.8}
 #
+
+
+import pandas as pd
+
+
+def load_data(dir_path):
+    data = pd.read_csv(dir_path, compression='zip')
+    return data
+
+def preprocess_data(data):
+    data['Age'] = 2021 - data['Year']
+    data = data.drop(columns=['Year', 'Car_Name'])
+    return data
+
+def split_data(data):
+    X = data.drop(columns=['Present_Price'])
+    y = data['Present_Price']
+    return X, y
+
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.linear_model import LinearRegression
+
+def create_pipeline():
+    categorical_features = ['Fuel_Type', 'Selling_type', 'Transmission']
+    numerical_features = ['Selling_Price', 'Driven_kms', 'Owner', 'Age']
+
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    numerical_transformer = MinMaxScaler()
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', categorical_transformer, categorical_features),
+            ('num', numerical_transformer, numerical_features)
+        ]
+    )
+
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('feature_selection', SelectKBest(score_func=f_regression)),
+        ('regressor', LinearRegression())
+    ])
+
+    return pipeline
+
+from sklearn.model_selection import GridSearchCV
+
+def optimize_hyperparameters(pipeline, X_train, y_train):
+    param_grid = {
+        'feature_selection__k':  range(1, 12)
+    }
+
+    grid_search = GridSearchCV(pipeline, param_grid, cv=10,
+                                scoring='neg_mean_absolute_error',
+                                n_jobs=-1,
+                                verbose=2,
+                                refit=True)
+
+    return grid_search.fit(X_train, y_train)
+
+import os
+import gzip
+import pickle
+import json
+
+def save_model(model):
+    os.makedirs('files/models', exist_ok=True)
+    with gzip.open('files/models/model.pkl.gz', 'wb') as file:
+        pickle.dump(model, file)
+
+from sklearn.metrics import r2_score, mean_squared_error, median_absolute_error
+
+def save_metrics(model, X_train, y_train, X_test, y_test):
+    metrics = []
+
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+
+    train_metrics = {
+        'type': 'metrics',
+        'dataset': 'train',
+        'r2': r2_score(y_train, y_train_pred),
+        'mse': mean_squared_error(y_train, y_train_pred),
+        'mad': median_absolute_error(y_train, y_train_pred)
+    }
+    metrics.append(train_metrics)
+
+    test_metrics = {
+        'type': 'metrics',
+        'dataset': 'test',
+        'r2': r2_score(y_test, y_test_pred),
+        'mse': mean_squared_error(y_test, y_test_pred),
+        'mad': median_absolute_error(y_test, y_test_pred)
+    }
+    metrics.append(test_metrics)
+
+    metrics_path = "files/output/metrics.json"
+    os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+    with open(metrics_path, 'w') as f:
+        for metric in metrics:
+            f.write(json.dumps(metric) + '\n')
+
+
+
+
+if __name__ == "__main__":
+    data_train = pd.read_csv("files/input/train_data.csv.zip")
+    data_test = pd.read_csv("files/input/test_data.csv.zip")
+
+    print(data_train.head())
+
+    data_train = preprocess_data(data_train)
+    data_test = preprocess_data(data_test)
+
+    print(data_train.head())
+
+    X_train, y_train = split_data(data_train)
+    X_test, y_test = split_data(data_test)
+
+    pipeline = create_pipeline()
+
+    model = optimize_hyperparameters(pipeline, X_train, y_train)
+
+    print(model.best_params_)
+    print(model.best_score_)
+
+    save_model(model)
+
+    save_metrics(model, X_train, y_train, X_test, y_test)
+
+
+
+
+
